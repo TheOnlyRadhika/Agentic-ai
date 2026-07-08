@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>DeFi Exploit Detector</title>
+</head>
+
+<body>
+
+    <h1>DeFi Exploit Detector</h1>
+
+    <input type="text" id="address" placeholder="Enter contract address 0x...">
+    <button onclick="analyse()">Investigate</button>
+
+    <div id="result"></div>
+
+    <script>
+        async function analyse() {
+            const address = document.getElementById("address").value
+            document.getElementById("result").innerHTML = "Analysing... please wait"
+
+            const response = await fetch("http://127.0.0.1:5000/analyse", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ address: address })
+            })
+
+            const data = await response.json()
+            document.getElementById("result").innerHTML = data.report
+        }
+    </script>
+
+</body>
+
+</html>
