@@ -2,7 +2,7 @@ import os
 import json
 from unittest import result
 from groq import Groq
-from tools import TOOL_MAP, TOOL_DEFINITIONS
+from tools import TOOL_MAP, TOOL_DEFINITIONS, analyse_source_code
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,81 +25,193 @@ GROQ_TOOLS = convert_tools_for_groq(TOOL_DEFINITIONS)
 
 SYSTEM_PROMPT = """
         You are an autonomous Ethereum Smart Contract Security Analyst.
-
-        Your primary objective is to determine whether a smart contract shows evidence of vulnerabilities, exploitation, or suspicious behaviour.
-
+        Your primary objective is to determine whether a smart contract 
+            shows evidence of vulnerabilities, exploitation, or suspicious behaviour.
         You are an investigator, not a report generator.
 
         -------------------------
         INVESTIGATION STRATEGY
         -------------------------
-
-        Before taking any action:
-
-        1. Identify what information is currently available.
-        2. Determine what information is missing.
-        3. Choose the investigative tool that best reduces this uncertainty.
-        4. After every tool result, reassess whether additional investigation is required.
-        5. Continue gathering evidence until you are confident that a conclusion can be supported.
-
-        Never perform unnecessary tool calls.
+       Before every tool call, reason through the following questions:
+        1. What evidence do I already have?
+        2. What important evidence is still missing?
+        3. Which available tool will reduce that uncertainty the most?
+        4. Will this new evidence materially improve the investigation?
+        Only call a tool if it provides new information.
+        Avoid repeating tool calls that have already been completed successfully.
+        Do not continue investigating if sufficient evidence has already been collected
+            to support a conclusion.
+        If both transaction analysis and source-code analysis are available, combine 
+            evidence from both before producing a final report.
+        
+        -------------------------
+        INVESTIGATION PRIORITIES
+        -------------------------
+        Prefer collecting evidence in the following order:
+        1. Transaction history
+        2. Transaction pattern analysis
+        3. Verified source code
+        4. Static source-code analysis
+        Only proceed to the next stage if the previous evidence is insufficient 
+          for a confident conclusion.
+        If no verified source code exists, explain that this limits the   
+           investigation rather than repeatedly attempting to retrieve it.
 
         -------------------------
         REASONING PRINCIPLES
         -------------------------
-
         Base every conclusion on evidence returned by tools.
-
         Never fabricate blockchain data.
-
         Never assume that the absence of evidence proves that the contract is safe.
-
         If evidence is insufficient, clearly explain what information is missing.
-
-        If multiple independent pieces of evidence point toward the same attack pattern, increase confidence in your conclusion.
-
-        -------------------------
-        REPORT FORMAT
-        -------------------------
-
-        Produce a structured report containing:
-
-        1. Executive Summary
-
-        2. Risk Score (1-10)
-
-        3. Confidence Score (0-100%)
-
-        4. Security Findings
-
-        5. Evidence Collected
-        - Block Numbers
-        - Addresses
-        - Transactions
-
-        6. Reasoning
-        Explain how the collected evidence supports each finding.
-
-        7. Investigation Limitations
-
-        8. Recommended Next Steps
-
-        Your goal is not to call every available tool.
-
-        Your goal is to gather enough evidence to make the best possible security assessment.
+        If multiple independent pieces of evidence point toward the same attack pattern, 
+        increase confidence in your conclusion.
     """
+
+REPORT_PROMPT = """
+            You are a senior Ethereum Smart Contract Security Auditor.
+            You are NOT responsible for investigating the contract.
+            The investigation has already been completed.
+            You will receive a structured investigation summary.
+            Your job is to convert the investigation summary into a professional security report.
+
+            Rules:
+            - Use ONLY the evidence provided.
+            - Never invent vulnerabilities.
+            - Explain findings clearly.
+            - Mention investigation limitations if present.
+
+            Produce the report using this format:
+            # Executive Summary
+            # Risk Score (1-10)
+            # Confidence Score (0-100%)
+            # Security Findings
+            # Evidence
+            # Investigation Limitations
+            # Recommended Next Steps
+
+            REPORT STYLE RULES:
+            - Keep the report concise and easy to scan.
+            - Do not use long paragraphs when a short statement is sufficient.
+            - Clearly distinguish confirmed vulnerabilities, suspicious signals, and weak heuristics.
+            - A first-time sender alone must not be treated as evidence of an attack.
+            - Use short sections and concise bullet points.
+            - Include only the most relevant evidence.
+            - Do not repeat the same finding in multiple sections.
+            - Risk scores must reflect evidence strength:
+            1-2: No meaningful evidence of exploitation
+            3-4: Weak suspicious signals
+            5-6: Multiple concerning indicators
+            7-8: Strong evidence of vulnerability or exploitation
+            9-10: Confirmed or near-certain active exploitation
+                 Your goal is not to call every available tool.
+                 Your goal is to gather enough evidence to make the best possible security assessment
+            """
+
+
+def build_planner_context(investigation_state):
+
+            planner_context = f"""
+        CURRENT INVESTIGATION STATE
+        Goal:
+        {investigation_state["goal"]}
+        Transaction History Collected:
+        {"Yes" if investigation_state["raw_transactions"] else "No"}
+        Transaction Analysis Completed:
+        {"Yes" if investigation_state["transaction_findings"] else "No"}
+        Verified Source Code Available:
+        {"Yes" if investigation_state["source_code"] else "No"}
+        Static Source Analysis Completed:
+        {"Yes" if investigation_state["source_findings"] else "No"}
+        Completed Investigation Steps:
+        {", ".join(investigation_state["tools_used"]) if investigation_state["tools_used"] else "None"}
+        Use this information before deciding the next investigative action.
+        Do not repeat completed investigation steps unless new evidence requires it.
+        """
+            return planner_context
+
+def build_investigation_summary(investigation_state):
+    summary = []
+    summary.append("=== INVESTIGATION SUMMARY ===")
+    transaction_findings = investigation_state.get("transaction_findings", {})
+    summary.append("")
+    summary.append("Dynamic Analysis")
+    summary.append("----------------")
+    summary.append(
+    f"Transactions Scanned: {transaction_findings.get('transactions_scanned', 0)}")
+    summary.append(
+        f"Reentrancy Flags: {len(transaction_findings.get('reentrancy_flags', []))}")
+    summary.append(
+        f"Balance Drains: {len(transaction_findings.get('balance_drains', []))}")
+    summary.append(
+        f"First-Time Senders: {len(transaction_findings.get('first_time_sender_flags', []))}")
+    
+    source_findings = investigation_state.get("source_findings", {})
+    summary.append("")
+    summary.append("Static Analysis")
+    summary.append("----------------")
+    summary.append(
+        f"Vulnerabilities Found: {len(source_findings.get('vulnerabilities', []))}"
+    )
+    source_findings = investigation_state.get("source_findings", {})
+
+    summary.append("")
+    summary.append("Static Analysis")
+    summary.append("----------------")
+
+    summary.append(
+        f"Total Static Findings: {source_findings.get('total_findings', 0)}"
+    )
+    for finding in source_findings.get("findings", []):
+        summary.append(
+            f"- [{finding['severity']}] {finding['type']}"
+        )
+
+    summary.append("")
+    summary.append("Overall Investigation")
+    summary.append("----------------------")
+    dynamic = investigation_state.get("transaction_findings", {})
+    static = investigation_state.get("source_findings", {})
+    total = (
+        dynamic.get("total_suspicious_patterns", 0)
+        + static.get("total_findings", 0)
+    )
+    summary.append(f"Total Indicators Detected: {total}")
+    summary.append(
+    f"Dynamic Analysis Completed: {'Yes' if dynamic else 'No'}")
+    summary.append(
+        f"Static Analysis Completed: {'Yes' if static else 'No'}"
+    )
+    return "\n".join(summary)
+
+def generate_final_report(client, investigation_state):
+    summary = build_investigation_summary(investigation_state)
+    messages = [
+        {"role": "system", "content": REPORT_PROMPT},
+        {"role": "user","content": summary}
+    ]
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",temperature=0,
+        max_tokens=1000,messages=messages
+    )
+    return response.choices[0].message.content
 
 
 def run_agent(address: str) -> dict:
 
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-    # investigation_state = {
-    # "goal": f"Analyse smart contract {address}",
-    # "tools_used": [],
-    # "evidence": [],
-    # "observations": []
-    # }
+    investigation_state = {
+    "goal": f"Analyse smart contract {address}",
+    "tools_used": [],
+    "evidence": [],
+    "observations": [],
+    "raw_transactions" : [],
+    "transaction_findings": {},
+    "tool_call_history": [],
+    "source_code" : None,
+    "source_findings": {}
+    }
 
     # Groq uses system message inside messages list
     messages = [
@@ -115,19 +227,28 @@ def run_agent(address: str) -> dict:
     while step < MAX_STEPS:
         step += 1
         print(f"── Step {step} ──────────────")
-        print("Before API call")
 
+        planner_context = build_planner_context(investigation_state)
+        planner_messages = messages + [
+                {
+                    "role": "system",
+                    "content": planner_context
+                }
+            ]
+        
+        print("Before API call")
+        
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             max_tokens=1000,
             temperature=0,
             tools=GROQ_TOOLS,
             tool_choice="auto",
-            messages=messages
+            messages=planner_messages
         )
 
         print("After API call")
-
+       
         message = response.choices[0].message
         finish_reason = response.choices[0].finish_reason
         print(f"finish_reason: {finish_reason}")
@@ -135,7 +256,8 @@ def run_agent(address: str) -> dict:
         # Case 1 — model is done
         if finish_reason == "stop":
             print("\n✓ Analysis complete.\n")
-            return {"status": "success", "report": message.content}
+            final_report = generate_final_report(client,investigation_state)
+            return {"status": "success", "report": final_report}
 
         # Case 2 — model wants to call a tool
         if finish_reason == "tool_calls":
@@ -152,20 +274,147 @@ def run_agent(address: str) -> dict:
                 tool_input = json.loads(tool_call.function.arguments)
 
                 print(f"  → calling: {tool_name}")
-                print(f"  → inputs:  {tool_input}")
+                print(f"  → inputs: {tool_input}")
 
+                call_signature = {
+                    "tool": tool_name,
+                    "input": tool_input
+                }
+
+                if call_signature in investigation_state["tool_call_history"]:
+
+                    llm_result = {
+                        "success": False,
+                        "error": "This exact tool call has already been executed. Use existing evidence or choose a different investigation strategy."
+                    }
+
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(llm_result)
+                    })
+
+                    continue
+
+                investigation_state["tool_call_history"].append(call_signature)
                 tool_fn = TOOL_MAP[tool_name]
-                result = tool_fn(tool_input)
 
-                print(f"  → result:  {result}\n")
+                # CASE 1: Fetch transactions
+                if tool_name == "get_contract_transactions":
 
-                # Feed result back
+                    result = tool_fn(tool_input)
+
+                    if result.get("transactions") is not None:
+                        investigation_state["raw_transactions"] = result["transactions"]
+
+                        llm_result = {
+                            "success": True,
+                            "total_fetched": result["total_fetched"],
+                            "message": "Transactions fetched successfully and stored for further analysis."
+                        }
+                    else:
+                        llm_result = result
+
+                # CASE 2: Analyze suspicious patterns
+                elif tool_name == "compute_suspicious_patterns":
+
+                    transactions = investigation_state["raw_transactions"]
+
+                    if not transactions:
+                        result = {
+                            "success": False,
+                            "error": "No transactions available. Call get_contract_transactions first."
+                        }
+                        llm_result = result
+
+                    else:
+                        result = tool_fn({
+                            "transactions": transactions,
+                            "address": tool_input["address"]
+                        })
+
+                        # Store ALL findings privately in Python state
+                        investigation_state["transaction_findings"] = result
+
+                        # Send only compact evidence to LLM
+                        llm_result = {
+                            "reentrancy": {
+                                "count": len(result["reentrancy_flags"]),
+                                "examples": result["reentrancy_flags"][:5]
+                            },
+                            "balance_drains": {
+                                "count": len(result["balance_drains"]),
+                                "examples": result["balance_drains"][:5]
+                            },
+                            "first_time_senders": {
+                                "count": len(result["first_time_sender_flags"]),
+                                "examples": result["first_time_sender_flags"][:5]
+                            },
+                            "total_suspicious_patterns": result["total_suspicious_patterns"],
+                            "transactions_scanned": result["transactions_scanned"]
+                        }
+                
+                elif tool_name == "get_contract_source":
+
+                    result = tool_fn(tool_input)
+
+                    if result.get("success") and result.get("source_code"):
+
+                        # Store complete source code privately in Python state
+                        investigation_state["source_code"] = result["source_code"]
+
+                        # Send only compact metadata to the LLM
+                        llm_result = {
+                            "success": True,
+                            "verified": True,
+                            "contract_name": result.get("contract_name"),
+                            "compiler_version": result.get("compiler_version"),
+                            "source_length": len(result["source_code"]),
+                            "message": "Verified source code fetched successfully and stored for further static analysis."
+                        }
+
+                    else:
+                        llm_result = result
+
+
+                elif tool_name == "analyse_source_code":
+                    source = investigation_state.get("source_code")
+                    if not source:
+                        result = {
+                            "success": False,
+                            "error": "No source code available. Call get_contract_source first."
+                        }
+                        llm_result = result
+                    else:
+                        result = tool_fn({"source_code" : source})
+                        investigation_state["source_findings"] = result
+
+                        llm_result= {
+                            "total_findings": result["total_findings"],
+                            "findings": result["findings"][:5]
+                            }
+                        
+                # CASE 3: Future tools
+                else:
+                    result = tool_fn(tool_input)
+                    llm_result = result
+
+                print(f"  → result for LLM: {llm_result}\n")
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": json.dumps(result)
+                    "content": json.dumps(llm_result)
                 })
-                # investigation_state["tools_used"].append(tool_name)
-                # investigation_state["evidence"].append(result)
 
-    return {"status": "error", "report": "Agent hit maximum steps. Analysis incomplete."}
+                investigation_state["tools_used"].append(tool_name)
+
+                investigation_state["observations"].append({
+                    "tool": tool_name,
+                    "result": llm_result
+                })
+
+    return {
+        "status": "error",
+        "report": "Agent hit maximum steps. Analysis incomplete."
+        }
