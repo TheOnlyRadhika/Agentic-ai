@@ -5,6 +5,10 @@ from agent import run_agent
 app = Flask(__name__)
 CORS(app)
 
+@app.route("/")
+def home():
+    return "Server is running!"
+
 @app.route("/analyse", methods=["POST"])
 def analyse():
     data = request.json
