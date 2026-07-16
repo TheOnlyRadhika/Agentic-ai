@@ -10,6 +10,11 @@ if not ETHERSCAN_KEY:
     raise ValueError("ETHERSCAN_API_KEY not found. Check your .env file.")
 BASE_URL = "https://api.etherscan.io/v2/api"
 
+def is_valid_address(address: str) -> bool:
+    return (
+        address.startswith("0x")
+        and len(address) == 42
+    )
 
 
 def get_contract_transactions(address: str,chainid: int = 1) -> dict:
@@ -28,6 +33,12 @@ def get_contract_transactions(address: str,chainid: int = 1) -> dict:
         - Returns error key if Etherscan rate limit hit
         - Returns error key if address is invalid
     """
+
+    if not is_valid_address(address):
+        return {
+            "success": False,
+            "message": "Invalid Ethereum address format."
+        }
     response = requests.get(BASE_URL, params={
             "chainid": chainid,
             "module": "account",
@@ -63,6 +74,11 @@ def get_contract_transactions(address: str,chainid: int = 1) -> dict:
 
 
 def get_contract_source(address: str, chainid: int = 1) -> dict:
+    if not is_valid_address(address):
+        return {
+            "success": False,
+            "message": "Invalid Ethereum address format."
+        }
 
     response = requests.get(BASE_URL, params={
         "chainid": chainid,

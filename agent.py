@@ -4,6 +4,8 @@ from unittest import result
 from groq import Groq
 from tools import TOOL_MAP, TOOL_DEFINITIONS, analyse_source_code
 from dotenv import load_dotenv
+from rag import retrieve_context
+
 
 load_dotenv()
 
@@ -66,6 +68,20 @@ SYSTEM_PROMPT = """
         If evidence is insufficient, clearly explain what information is missing.
         If multiple independent pieces of evidence point toward the same attack pattern, 
         increase confidence in your conclusion.
+
+        You will receive:
+
+        1. Investigation Summary
+        2. Background Security Knowledge
+
+        The Investigation Summary contains the evidence collected by the investigation.
+        The Background Security Knowledge contains general smart contract security guidance.
+        Never treat the background knowledge as evidence.
+
+        Use it only to:
+        - explain why a finding is risky,
+        - recommend mitigations,
+        - improve the quality of the report.
     """
 
 REPORT_PROMPT = """
@@ -108,27 +124,60 @@ REPORT_PROMPT = """
                  Your goal is to gather enough evidence to make the best possible security assessment
             """
 
+MEMORY_PROMPT = """
+        You are the short-term memory module of an autonomous smart contract security agent.
+        Your job is to summarize the latest tool execution.
+        Given the tool name and a compact summary of its result, generate:
+        1. Observation:
+        - What was learned from this tool execution?
+        2. Decision:
+        - What should the agent investigate next based on this result?
+        Rules:
+        - Keep each response to one concise sentence.
+        - Do not repeat raw JSON.
+        - Do not invent facts.
+        - Base your reasoning only on the provided tool summary.
+        - Return ONLY valid JSON in the following format:
+        {
+            "observation": "...",
+            "decision": "..."
+        }
+        """
+
 
 def build_planner_context(investigation_state):
 
             planner_context = f"""
-        CURRENT INVESTIGATION STATE
-        Goal:
-        {investigation_state["goal"]}
-        Transaction History Collected:
-        {"Yes" if investigation_state["raw_transactions"] else "No"}
-        Transaction Analysis Completed:
-        {"Yes" if investigation_state["transaction_findings"] else "No"}
-        Verified Source Code Available:
-        {"Yes" if investigation_state["source_code"] else "No"}
-        Static Source Analysis Completed:
-        {"Yes" if investigation_state["source_findings"] else "No"}
-        Completed Investigation Steps:
-        {", ".join(investigation_state["tools_used"]) if investigation_state["tools_used"] else "None"}
-        Use this information before deciding the next investigative action.
-        Do not repeat completed investigation steps unless new evidence requires it.
-        """
+            CURRENT INVESTIGATION STATE
+            Goal:
+            {investigation_state["goal"]}
+            Transaction History Collected:
+            {"Yes" if investigation_state["raw_transactions"] else "No"}
+            Transaction Analysis Completed:
+            {"Yes" if investigation_state["transaction_findings"] else "No"}
+            Verified Source Code Available:
+            {"Yes" if investigation_state["source_code"] else "No"}
+            Static Source Analysis Completed:
+            {"Yes" if investigation_state["source_findings"] else "No"}
+            Completed Investigation Steps:
+            {", ".join(investigation_state["tools_used"]) if investigation_state["tools_used"] else "None"}
+            Use this information before deciding the next investigative action.
+            Do not repeat completed investigation steps unless new evidence requires it.
+            """
+            memory_summary = build_memory_summary(investigation_state)
+            planner_context += f"""
+                =========================
+                SHORT-TERM MEMORY
+                =========================
+                {memory_summary if memory_summary else "No previous reasoning available."}
+                Use this memory to:
+                - Avoid repeating completed investigations.
+                - Build upon previous observations.
+                - Decide the next best investigative action.
+                """
             return planner_context
+
+
 
 def build_investigation_summary(investigation_state):
     summary = []
@@ -184,17 +233,114 @@ def build_investigation_summary(investigation_state):
     )
     return "\n".join(summary)
 
+
+
 def generate_final_report(client, investigation_state):
     summary = build_investigation_summary(investigation_state)
+    rag_context =retrieve_context(investigation_state)
+
+    user_prompt = f"""
+        ========================
+        INVESTIGATION SUMMARY
+        ========================
+
+        {summary}
+
+        ========================
+        BACKGROUND SECURITY KNOWLEDGE
+        ========================
+
+        {rag_context}
+
+        The background security knowledge is background information only.
+        Do NOT treat it as evidence.
+
+        Generate the final audit report using the investigation summary as evidence,
+        and use the background knowledge only to explain risks and recommend mitigations.
+        """
     messages = [
         {"role": "system", "content": REPORT_PROMPT},
-        {"role": "user","content": summary}
+        {"role": "user","content": user_prompt}
     ]
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",temperature=0,
         max_tokens=1000,messages=messages
     )
     return response.choices[0].message.content
+
+
+
+
+def update_short_term_memory(client , investigation_state,tool_name,result):
+    """
+    Updates the short-term memory of the investigation state with the latest tool result.
+    """
+    tool_summary = {
+        "tool": tool_name,
+        "success" : result.get("success", False)
+    }
+    
+    if tool_name == "get_contract_transactions":
+        tool_summary["transactions"] = result.get(
+            "total_fetched", 0
+        )
+    elif tool_name == "compute_suspicious_patterns":
+        tool_summary["patterns"] = result.get(
+        "total_suspicious_patterns", 0
+        )
+        tool_summary["pattern_types"] = {
+        "reentrancy": len(result.get("reentrancy_flags", [])),
+        "balance_drains": len(result.get("balance_drains", [])),
+        "first_time_senders": len(result.get("first_time_sender_flags", []))
+    }
+    elif tool_name == "get_contract_source":
+        tool_summary["verified"] = result.get("verified", False)
+        tool_summary["contract_name"] = result.get("contract_name", "")
+
+    elif tool_name == "analyse_source_code":
+        tool_summary["findings"] = result.get(
+            "total_findings", 0
+        )
+
+
+    messages = [
+    {"role": "system", "content": MEMORY_PROMPT},
+    {"role": "user","content": json.dumps(tool_summary)}
+    ]
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        temperature=0,
+        messages=messages,
+        response_format={"type": "json_object"}
+    )
+
+    reflection = json.loads(
+        response.choices[0].message.content
+    )
+    investigation_state["short_term_memory"].append({
+        "step": len(investigation_state["short_term_memory"]) + 1,
+        "tool": tool_name,
+        "observation": reflection["observation"],
+        "decision": reflection["decision"]
+    })
+    return reflection
+
+def build_memory_summary(investigation_state):
+    memory = investigation_state["short_term_memory"]
+    summary = []
+    for entry in memory[-5:]:
+        summary.append(
+            f"""
+        Step {entry['step']}
+        Observation:
+        {entry['observation']}
+        Decision:
+        {entry['decision']}
+        """
+    )
+    return "\n".join(summary)
+
 
 
 def run_agent(address: str) -> dict:
@@ -210,9 +356,10 @@ def run_agent(address: str) -> dict:
     "transaction_findings": {},
     "tool_call_history": [],
     "source_code" : None,
-    "source_findings": {}
+    "source_findings": {},
+    "short_term_memory" : []
     }
-
+    
     # Groq uses system message inside messages list
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -228,12 +375,11 @@ def run_agent(address: str) -> dict:
         step += 1
         print(f"── Step {step} ──────────────")
 
+        
         planner_context = build_planner_context(investigation_state)
+        
         planner_messages = messages + [
-                {
-                    "role": "system",
-                    "content": planner_context
-                }
+                {"role": "user","content": planner_context}
             ]
         
         print("Before API call")
@@ -413,6 +559,9 @@ def run_agent(address: str) -> dict:
                     "tool": tool_name,
                     "result": llm_result
                 })
+                update_short_term_memory(client, investigation_state, tool_name,llm_result)
+                print("\nMemory Updated:")
+                print(build_memory_summary(investigation_state))
 
     return {
         "status": "error",

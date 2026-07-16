@@ -1,1 +1,17 @@
+# Virtual environments
+.venv/
+myenvi/
+
+# Environment variables
 .env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
