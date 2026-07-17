@@ -1,20 +1,29 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
 from agent import run_agent
 
-app = Flask(__name__)
-CORS(app)
+app = FastAPI(
+    title="Agentic AI Smart Contract Scanner",
+    description="Autonomous AI-powered smart contract investigation agent",
+    version="1.0.0",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+class AnalyseRequest(BaseModel):
+    address: str
 
-@app.route("/")
+@app.get("/")
 def home():
-    return "Server is running!"
+    return {"message": "Server is running!"}
 
-@app.route("/analyse", methods=["POST"])
-def analyse():
-    data = request.json
-    address = data["address"]
-    result = run_agent(address)
-    return jsonify(result)
-
-if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+@app.post("/analyse")
+def analyse(request: AnalyseRequest):
+    result = run_agent(request.address)
+    return result
