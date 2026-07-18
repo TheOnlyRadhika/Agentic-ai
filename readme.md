@@ -1,12 +1,12 @@
-# 🛡️ Agentic AI Smart Contract Security Scanner
+# Agentic AI Smart Contract Security Scanner
 
 An autonomous AI-powered security analyst for Ethereum smart contracts. The agent investigates a deployed contract using a ReAct reasoning loop, performs both dynamic and static analysis, retrieves relevant security knowledge through Retrieval-Augmented Generation (RAG), maintains short-term reasoning memory, and generates a professional security audit report.
 
 ---
 
-## 🚀 Features
+## Features
 
-### 🤖 Agentic Investigation (ReAct)
+### Agentic Investigation (ReAct)
 - Uses an LLM-based planner to determine the next investigation step.
 - Dynamically selects tools based on the current investigation state.
 - Prevents redundant tool execution using tool call history.
@@ -14,7 +14,7 @@ An autonomous AI-powered security analyst for Ethereum smart contracts. The agen
 
 ---
 
-### 🔍 Dynamic Transaction Analysis
+### Dynamic Transaction Analysis
 Retrieves historical transactions from Etherscan and detects suspicious patterns including:
 - Reentrancy-like transaction behavior
 - Large balance drain patterns
@@ -22,7 +22,7 @@ Retrieves historical transactions from Etherscan and detects suspicious patterns
 
 ---
 
-### 📄 Static Source Code Analysis
+### Static Source Code Analysis
 Fetches verified Solidity source code from Etherscan and performs heuristic security analysis.
 
 Current checks include:
@@ -34,7 +34,7 @@ Current checks include:
 
 ---
 
-### 🧠 Short-Term Memory
+### Short-Term Memory
 The agent maintains an internal working memory throughout the investigation.
 
 Instead of only storing raw tool outputs, a dedicated LLM reflection module summarizes each investigation step into:
@@ -46,7 +46,7 @@ This allows the planner to reason using previous conclusions rather than repeate
 
 ---
 
-### 📚 Retrieval-Augmented Generation (RAG)
+### Retrieval-Augmented Generation (RAG)
 The report generator retrieves relevant security knowledge from a local Markdown knowledge base.
 
 Examples include:
@@ -66,7 +66,7 @@ Retrieved knowledge is supplied to the report generation model to provide:
 
 ---
 
-### 📊 Professional Audit Report
+### Professional Audit Report
 Generates a structured audit report containing:
 
 - Executive Summary
@@ -79,7 +79,7 @@ Generates a structured audit report containing:
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```text
                 User Contract Address
@@ -112,7 +112,7 @@ Generates a structured audit report containing:
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```text
 Agentic-ai/
@@ -137,7 +137,7 @@ Agentic-ai/
 
 ---
 
-## ⚙️ Tech Stack
+## Tech Stack
 
 ### AI
 - Groq API
@@ -158,7 +158,7 @@ Agentic-ai/
 
 ---
 
-## 🛠️ Installation
+## Installation
 
 Clone the repository
 
@@ -184,7 +184,7 @@ ETHERSCAN_API_KEY=YOUR_ETHERSCAN_API_KEY
 
 ---
 
-## ▶️ Running the Agent
+## Running the Agent
 
 Command Line
 
@@ -199,7 +199,7 @@ uv run uvicorn server:app --reload
 ```
 
 
-## 🔄 Investigation Pipeline
+## Investigation Pipeline
 
 ```text
 Receive Contract Address
@@ -228,7 +228,7 @@ Generate Professional Security Report
 
 ---
 
-## 🧠 Agent Design
+## Agent Design
 
 The project follows a ReAct (Reasoning + Acting) architecture.
 
@@ -246,7 +246,7 @@ This creates a stateful investigation workflow instead of a single-pass LLM inte
 
 ---
 
-## 📈 Future Improvements
+## Future Improvements
 
 - Vector database-based semantic RAG
 - Symbolic execution
@@ -257,11 +257,5 @@ This creates a stateful investigation workflow instead of a single-pass LLM inte
 - Function-level vulnerability detection
 - Interactive React frontend
 - Docker deployment
-
----
-
-## 📄 License
-
-MIT License
 
 ---
